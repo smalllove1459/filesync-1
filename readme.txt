@@ -1,7 +1,12 @@
 Sync server files remotely.
 
+Buildï¼š
+   cd <project_dir>
+   export GOPATH=`pwd`
+   go install filesync
+
 Run (at port 80):
-    filesync
+    bin/filesync
 
 The filesync server acts both as file sender and file reveiver.
     
@@ -17,4 +22,4 @@ Followings are not supported now:
     cryptography, not support https
     file hash and file database
     delete files
-    ¶àµã´«Êä
+    å¤šç‚¹ä¼ è¾“
