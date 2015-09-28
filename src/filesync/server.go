@@ -16,9 +16,13 @@ import (
 
 const (
 	// FileSavePath and FileSyncingPath must be in the same partition (and on Linux OS), otherwise os.Rename will fail.
-	FileSavePath        = "/var/lib/filesync-save"
-	FileSyncingPath     = "/var/lib/filesync-sync"
-	FileSyncingInfoPath = "/var/lib/filesync-info"
+
+	//FileSavePath        = "/var/lib/filesync-save"
+	//FileSyncingPath     = "/var/lib/filesync-sync"
+	//FileSyncingInfoPath = "/var/lib/filesync-info"
+	FileSavePath        = "D:/opensource/mine/_save"
+	FileSyncingPath     = "D:/opensource/mine/_sync"
+	FileSyncingInfoPath = "D:/opensource/mine/_info"
 
 	UrlPrefix_Sync = "/sync" // as receiver
 	UrlPrefix_Pull = "/pull" // as sender. This is just for using this program as a file server.
