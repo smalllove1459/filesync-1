@@ -5,8 +5,8 @@ Build：
    export GOPATH=`pwd`
    go install filesync
 
-Run (at port 80):
-    bin/filesync
+Run (default port is 80):
+    bin/filesync -port=80
 
 The filesync server acts both as file sender and file reveiver.
     

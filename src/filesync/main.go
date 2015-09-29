@@ -1,5 +1,5 @@
-// Run (now port is 80):
-//    filesync
+// Run (default port is 80):
+//    filesync -port=80
 //
 // To sync a new file:
 //    curl -X POST -d remote=remote-server:port/pull -d file=path-to-file http://filesync-server:port/sync
@@ -15,7 +15,10 @@
 //
 package main
 
-func main() {
-	new(Server).start(80)
-}
+import "flag"
 
+func main() {
+	port := flag.Int("port", 80, "server ports")
+	flag.Parse()
+	new(Server).start(*port)
+}

@@ -21,6 +21,6 @@ RUN cd /projects
 RUN git clone https://github.com/TapirLiu/filesync.git
 RUN cd filesync
 RUN go install filesync
-RUN bin/filesync
+RUN bin/filesync -port=80
 
   
