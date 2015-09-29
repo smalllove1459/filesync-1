@@ -267,8 +267,9 @@ type MyRequestToRemote struct {
 	remoteSerever string
 	filePath      string
 
-	fileSize   int64
-	downloaded int64
+	fileSize      int64
+	downloaded    int64
+	newDownloaded int64
 
 	targetFileInfo *TargetFileInfo
 
@@ -294,8 +295,8 @@ func (myRequest *MyRequestToRemote) removeTempFiles() {
 	myRequest.removeFile(getFilleFullPath(FileSyncingInfoPath, myRequest.filePath))
 }
 
-func (myRequest *MyRequestToRemote) error(numNewBytes int64, msg string, fatal bool) {
-	log.Printf("Error on file (%s) syncing: %s. Download %d bytes.\n", myRequest.filePath, msg, numNewBytes)
+func (myRequest *MyRequestToRemote) error(msg string, fatal bool) {
+	log.Printf("Error on file (%s) syncing: %s. Download new %d bytes.\n", myRequest.filePath, msg, myRequest.newDownloaded)
 	if fatal {
 		myRequest.removeTempFiles()
 	}
@@ -303,15 +304,15 @@ func (myRequest *MyRequestToRemote) error(numNewBytes int64, msg string, fatal b
 	myRequest.close()
 }
 
-func (myRequest *MyRequestToRemote) ok(numNewBytes int64, justFinished bool, utcTime time.Time) {
+func (myRequest *MyRequestToRemote) ok(justFinished bool, utcTime time.Time) {
 	if justFinished {
 		myRequest.moveFile(getFilleFullPath(FileSyncingPath, myRequest.filePath), getFilleFullPath(FileSavePath, myRequest.filePath))
 		myRequest.removeTempFiles()
 		changeFileModifyTime(getFilleFullPath(FileSavePath, myRequest.filePath), utcTime)
 
-		log.Printf("Finished file (%s) syncing. Download %d bytes.\n", myRequest.filePath, numNewBytes)
+		log.Printf("Finished file (%s) syncing. Download new %d bytes.\n", myRequest.filePath, myRequest.newDownloaded)
 	} else {
-		log.Printf("Stopped file (%s) syncing. Download %d bytes.\n", myRequest.filePath, numNewBytes)
+		log.Printf("Stopped file (%s) syncing. Download new %d bytes.\n", myRequest.filePath, myRequest.newDownloaded)
 	}
 
 	myRequest.close()
@@ -323,34 +324,28 @@ func (myRequest *MyRequestToRemote) close() {
 
 func (myRequest *MyRequestToRemote) run() {
 	num_retries := 0
-	total_download_bytes := int64(0)
-	goto START
-
-RETRRY:
-	if num_retries < MaxNumRetries {
+	
+	for myRequest.doDownload () && num_retries <= MaxNumRetries {
 		num_retries++
+		
 		myRequest.targetFileInfo, _ = myRequest.getTargetFileInfo(myRequest.filePath)
-		if myRequest.targetFileInfo != nil {
-			log.Printf("Retry (%d) download file: %s", num_retries, myRequest.filePath)
-			goto START
-		} else {
-			log.Printf("Failed to retry (%d) download file: %s", num_retries, myRequest.filePath)
+		if myRequest.targetFileInfo == nil {
+			myRequest.error(fmt.Sprintf("Failed to retry (%d) download file: %s", num_retries, myRequest.filePath), false)
 		}
+		
+		log.Printf("Retry (%d) download file: %s", num_retries, myRequest.filePath)
 	}
+}
 
-	myRequest.ok(total_download_bytes, false, time.Time{})
-	return
-
-START:
-
+func (myRequest *MyRequestToRemote) doDownload () bool {
 	target_file_info := myRequest.targetFileInfo
 
 	remote_url := fmt.Sprintf("http://%s%s", myRequest.remoteSerever, validateFilePath(myRequest.filePath))
 
 	request, err := http.NewRequest("POST", remote_url, nil)
 	if err != nil {
-		myRequest.error(total_download_bytes, err.Error(), false)
-		return
+		myRequest.error(err.Error(), false)
+		return false
 	}
 
 	if target_file_info.syncingFileInfo != nil { // && target_file_info.fileSyncingInfo != nil
@@ -366,8 +361,8 @@ START:
 
 	response, err := client.Do(request)
 	if err != nil {
-		myRequest.error(total_download_bytes, err.Error(), false)
-		return
+		myRequest.error(err.Error(), false)
+		return false
 	}
 
 	defer response.Body.Close()
@@ -379,57 +374,58 @@ START:
 
 		myRequest.removeTempFiles()
 
-		myRequest.ok(0, false, time.Time{})
+		myRequest.ok(false, time.Time{})
 
 	} else if response.StatusCode == http.StatusPartialContent { // 206
 		log.Printf("Response: downloading resumed.\n")
 
 		if target_file_info.syncingFileInfo == nil || target_file_info.fileSyncingInfo == nil {
-			myRequest.error(total_download_bytes, "syncingFileInfo and fileSyncingInfo shouldn't be null", false)
-			return
+			myRequest.error("syncingFileInfo and fileSyncingInfo shouldn't be null", false)
+			return false
 		}
 		myRequest.fileSize = int64(target_file_info.fileSyncingInfo.ContentLength)
 		myRequest.downloaded = int64(target_file_info.syncingFileInfo.size)
 
 		content_range := perseContentRange(response.Header.Get("Content-Range"))
 		if content_range == nil {
-			myRequest.error(total_download_bytes, fmt.Sprintf("Parse error (%s) in syncing file: %s", response.Header.Get("Content-Range"), myRequest.filePath), false)
-			return
+			myRequest.error(fmt.Sprintf("Parse error (%s) in syncing file: %s", response.Header.Get("Content-Range"), myRequest.filePath), false)
+			return false
 		}
 
 		if int64(content_range.start) != target_file_info.syncingFileInfo.size {
-			myRequest.error(total_download_bytes, fmt.Sprintf("Content-Range start (%d) doesn't math current file size (%d).", content_range.start, target_file_info.syncingFileInfo.size), false)
-			return
+			myRequest.error(fmt.Sprintf("Content-Range start (%d) doesn't math current file size (%d).", content_range.start, target_file_info.syncingFileInfo.size), false)
+			return false
 		}
 
 		content_length, err := strconv.Atoi(response.Header.Get("Content-Length"))
 		if err != nil {
-			myRequest.error(total_download_bytes, err.Error(), false)
-			return
+			myRequest.error(err.Error(), false)
+			return false
 		}
 
 		num_bytes, err := writeFileFromReader(response.Body, getFilleFullPath(FileSyncingPath, myRequest.filePath), true)
-		total_download_bytes += num_bytes
+		myRequest.downloaded += num_bytes
+		myRequest.newDownloaded += num_bytes
 
 		//if err != nil {
-		//	myRequest.error(total_download_bytes, err.Error(), false)
-		//	return
+		//	myRequest.error(err.Error(), false)
+		//	return false
 		//}
 		if num_bytes > int64(content_length) {
-			myRequest.error(total_download_bytes, fmt.Sprintf("Error: num_bytes > content_length in syncing file: %s", myRequest.filePath), true)
-			return
+			myRequest.error(fmt.Sprintf("Error: num_bytes > content_length in syncing file: %s", myRequest.filePath), true)
+			return false
 		}
 
 		new_size := int64(num_bytes) + target_file_info.syncingFileInfo.size
 		if new_size > target_file_info.fileSyncingInfo.ContentLength {
-			myRequest.error(total_download_bytes, fmt.Sprintf("Error: new_size > target_file_info..fileSyncingInfo.ContentLength: %s", myRequest.filePath), true)
-			return
+			myRequest.error(fmt.Sprintf("Error: new_size > target_file_info..fileSyncingInfo.ContentLength: %s", myRequest.filePath), true)
+			return false
 		}
 
 		if num_bytes == int64(content_length) && new_size == target_file_info.fileSyncingInfo.ContentLength {
-			myRequest.ok(total_download_bytes, true, target_file_info.fileSyncingInfo.LastModified)
+			myRequest.ok(true, target_file_info.fileSyncingInfo.LastModified)
 		} else {
-			goto RETRRY
+			return true // retry
 		}
 
 	} else if response.StatusCode == http.StatusOK || response.StatusCode == http.StatusRequestedRangeNotSatisfiable { // 200 or 416
@@ -439,16 +435,16 @@ START:
 
 		content_length, err := strconv.Atoi(response.Header.Get("Content-Length"))
 		if err != nil {
-			myRequest.error(total_download_bytes, err.Error(), false)
-			return
+			myRequest.error(err.Error(), false)
+			return false
 		}
 		myRequest.fileSize = int64(content_length)
 		myRequest.downloaded = 0
 
 		last_modified, err := time.Parse(http.TimeFormat, response.Header.Get("Last-Modified"))
 		if err != nil {
-			myRequest.error(total_download_bytes, err.Error(), false)
-			return
+			myRequest.error(err.Error(), false)
+			return false
 		}
 
 		syncing_info := &FileSnycingInfo{
@@ -458,26 +454,29 @@ START:
 		writeFileSyncingInfo(getFilleFullPath(FileSyncingInfoPath, myRequest.filePath), syncing_info)
 
 		num_bytes, err := writeFileFromReader(response.Body, getFilleFullPath(FileSyncingPath, myRequest.filePath), false)
-		total_download_bytes = num_bytes
+		myRequest.downloaded += num_bytes
+		myRequest.newDownloaded += num_bytes
 
 		//if err != nil {
-		//	myRequest.error(total_download_bytes, err.Error(), false)
-		//	return
+		//	myRequest.error( err.Error(), false)
+		//	return false
 		//}
 		if num_bytes > int64(content_length) {
-			myRequest.error(total_download_bytes, fmt.Sprintf("Error: num_bytes > content_length in syncing file: %s", myRequest.filePath), true)
-			return
+			myRequest.error( fmt.Sprintf("Error: num_bytes > content_length in syncing file: %s", myRequest.filePath), true)
+			return false
 		}
 
 		if num_bytes == int64(content_length) {
-			myRequest.ok(total_download_bytes, true, last_modified)
+			myRequest.ok( true, last_modified)
 		} else {
-			goto RETRRY
+			return true // retry
 		}
 
 	} else { // unsupported
-		myRequest.error(total_download_bytes, fmt.Sprintf("Unsupported response status code: %d", response.StatusCode), false)
+		myRequest.error( fmt.Sprintf("Unsupported response status code: %d", response.StatusCode), false)
 	}
+	
+	return false
 }
 
 ///===========================================================================
@@ -486,15 +485,6 @@ START:
 
 func (server *Server) syncHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
-
-	remote_server := r.FormValue("remote")
-	if remote_server == "" {
-		w.Write([]byte("Please set remote server: -d remote=remote_server"))
-		return
-	}
-	if strings.HasSuffix(remote_server, "/") {
-		remote_server = remote_server[:len(remote_server)-1]
-	}
 
 	file_path := r.FormValue("file")
 	if file_path == "" {
@@ -511,6 +501,17 @@ func (server *Server) syncHandler(w http.ResponseWriter, r *http.Request) {
 	if result != "" {
 		w.Write([]byte(result))
 		return
+	}
+
+	// ...
+
+	remote_server := r.FormValue("remote")
+	if remote_server == "" {
+		w.Write([]byte("Please set remote server: -d remote=remote_server"))
+		return
+	}
+	if strings.HasSuffix(remote_server, "/") {
+		remote_server = remote_server[:len(remote_server)-1]
 	}
 
 	// ...
