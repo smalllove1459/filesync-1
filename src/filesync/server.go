@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"regexp"
 	"sync/atomic"
 	"time"
 )
@@ -26,6 +27,34 @@ const (
 	UrlPrefix_Sync = "/sync" // as receiver
 	UrlPrefix_Pull = "/pull" // as sender. This is just for using this program as a file server.
 )
+
+///===========================================================================
+/// 
+///===========================================================================
+
+var Regexp_SlashesAndSpaces *regexp.Regexp
+var Regexp_MultipleSlashes *regexp.Regexp
+
+func init () {
+	Regexp_SlashesAndSpaces = regexp.MustCompile (`\s*/+\s*`)
+	Regexp_MultipleSlashes = regexp.MustCompile (`/+`)
+}
+
+func validateFilePath(filePath string) string {
+	filePath = strings.Replace (filePath, "\\", "/", -1)
+	filePath = Regexp_SlashesAndSpaces.ReplaceAllString (filePath, "/")
+	filePath = Regexp_MultipleSlashes.ReplaceAllString (filePath, "/")
+	
+	if strings.HasPrefix (filePath, "/") {
+		filePath = filePath [1:]
+	}
+	
+	return filePath
+}
+
+func getFilleFullPath(basePath string, valideFilePath string) string {
+	return filepath.FromSlash(fmt.Sprintf("%s/%s", basePath, valideFilePath))
+}
 
 ///===========================================================================
 /// file
@@ -50,18 +79,6 @@ type TargetFileInfo struct {
 
 	syncingFileInfo *FileInfo
 	fileSyncingInfo *FileSnycingInfo
-}
-
-func validateFilePath(filePath string) string {
-	if strings.HasPrefix(filePath, "/") {
-		return filePath
-	} else {
-		return fmt.Sprintf("/%s", filePath)
-	}
-}
-
-func getFilleFullPath(path string, file string) string {
-	return filepath.FromSlash(fmt.Sprintf("%s%s", path, file))
 }
 
 func getFileInfo(fullFilePath string) (*FileInfo, error) {
@@ -266,6 +283,7 @@ type MyRequestToRemote struct {
 
 	remoteSerever string
 	filePath      string
+	remoteURL     string
 
 	fileSize      int64
 	downloaded    int64
@@ -331,7 +349,7 @@ func (myRequest *MyRequestToRemote) run() {
 		myRequest.targetFileInfo, _ = myRequest.getTargetFileInfo(myRequest.filePath)
 		if myRequest.targetFileInfo == nil {
 			myRequest.error(fmt.Sprintf("Failed to retry (%d) download file: %s", num_retries, myRequest.filePath), false)
-			reurn
+			return
 		}
 		
 		log.Printf("Retry (%d) download file: %s", num_retries, myRequest.filePath)
@@ -341,9 +359,7 @@ func (myRequest *MyRequestToRemote) run() {
 func (myRequest *MyRequestToRemote) doDownload () bool {
 	target_file_info := myRequest.targetFileInfo
 
-	remote_url := fmt.Sprintf("http://%s%s", myRequest.remoteSerever, validateFilePath(myRequest.filePath))
-
-	request, err := http.NewRequest("POST", remote_url, nil)
+	request, err := http.NewRequest("POST", myRequest.remoteURL, nil)
 	if err != nil {
 		myRequest.error(err.Error(), false)
 		return false
@@ -488,11 +504,11 @@ func (server *Server) syncHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 
 	file_path := r.FormValue("file")
+	file_path = validateFilePath(file_path)
 	if file_path == "" {
 		w.Write([]byte("Please set remote file: -d file=path/to/file"))
 		return
 	}
-	file_path = validateFilePath(file_path)
 
 	// ...
 
@@ -521,6 +537,7 @@ func (server *Server) syncHandler(w http.ResponseWriter, r *http.Request) {
 		server:        server,
 		remoteSerever: remote_server,
 		filePath:      file_path,
+		remoteURL:     fmt.Sprintf("http://%s/%s", remote_server, file_path),
 	}
 
 	target_file_info, err := my_request.getTargetFileInfo(file_path)
