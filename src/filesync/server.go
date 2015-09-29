@@ -331,6 +331,7 @@ func (myRequest *MyRequestToRemote) run() {
 		myRequest.targetFileInfo, _ = myRequest.getTargetFileInfo(myRequest.filePath)
 		if myRequest.targetFileInfo == nil {
 			myRequest.error(fmt.Sprintf("Failed to retry (%d) download file: %s", num_retries, myRequest.filePath), false)
+			reurn
 		}
 		
 		log.Printf("Retry (%d) download file: %s", num_retries, myRequest.filePath)
